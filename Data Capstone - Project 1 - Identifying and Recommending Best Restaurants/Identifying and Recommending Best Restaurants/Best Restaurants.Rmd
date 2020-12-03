@@ -1,0 +1,884 @@
+---
+title: "Identifying and Recommending Best Restaurants"
+author: "Andrei Enescu"
+date: "11/13/2020"
+output:
+  pdf_document: default
+---
+
+# DESCRIPTION  
+
+   A restaurant consolidator is looking to revamp the B2C portal using
+ intelligent automation tech. This requires a different matrix to identify
+ the star restaurants and generate recommendations. To make sure an effective
+ model can be achieved, it is important to understand the behavior of the data
+ in hand.  
+
+   There are 2 datasets, data and Country-Code. Dataset data has 19 attributes
+ and Country-Code has two attributes.  
+
+   You are required to determine certain matrices to identify the star
+ restaurants and generate recommendations.  
+
+# Step to perform:  
+
+# Importing, Understanding, and Inspecting Data :  
+
+   Perform preliminary data inspection and report the findings as the structure
+ of the data, missing values, duplicates, etc.  
+   Based on the findings from the previous questions, identify duplicates and
+ remove them  
+
+# Performing EDA:  
+
+1. Explore the geographical distribution of the restaurants and identify the 
+cities with the maximum and minimum number of restaurants  
+2. Restaurant franchising is a thriving venture. So, it is very important to 
+explore the franchise with most national presence  
+3. Find out the ratio between restaurants that allow table booking vs. those 
+that do not allow table booking  
+4. Find out the percentage of restaurants providing online delivery  
+5. Calculate the difference in number of votes for the restaurants that deliver 
+and the restaurants that do not deliver  
+6. What are the top 10 cuisines served across cities?  
+7. What is the maximum and minimum number of cuisines that a restaurant serves? 
+Also, which is the most served cuisine across the restaurant for each city?
+8. What is the distribution cost across the restaurants?  
+9. How ratings are distributed among the various factors?  
+10.Explain the factors in the data that may have an effect on ratings. 
+For example, number of cuisines, cost, delivery option, etc.  
+
+# Dashboarding:  
+
+   Visualize the variables using Tableau to help user explore the data and 
+create a better understanding of the restaurants to identify the ‘’star’’ 
+restaurant  
+   Demonstrate the variables associated with each other and factors to build a
+dashboard  
+
+*****
+
+These are the libraries I used:  
+```{r message=FALSE, warning=FALSE}
+library(rio)
+library(tmaptools)
+library(plyr)
+library(dplyr)
+library(janitor)
+library(ggplot2)
+library(forcats)
+library(plotly)
+library(wordcloud)
+library(tm)
+library(tidyr)
+library(stringr)
+```
+
+## Importing, Understanding, and Inspecting Data :
+
+##   Perform preliminary data inspection and report the findings as the structure
+## of the data, missing values, duplicates, etc.
+##   Based on the findings from the previous questions, identify duplicates and
+## remove them
+
+```{r}
+Cntry_code <- import("Country-Code.xlsx")
+RestDF <- import("data.xlsx")
+
+head(Cntry_code)
+str(Cntry_code)
+colnames(Cntry_code)
+summary(Cntry_code)
+which (is.na(Cntry_code))
+sum(duplicated(Cntry_code))
+
+
+head(RestDF)
+str(RestDF)
+colnames(RestDF)
+summary(RestDF)
+colnames(RestDF)[colSums(is.na(RestDF)) > 0]
+which (is.na(RestDF$`Restaurant Name`))
+which (is.na(RestDF$Cuisines))
+```
+
+
+There is one restaurant name missing and 9 records without cuisine.
+
+Omitting the row without restaurant name and replacing the cuisine NA values
+with "Other".
+
+```{r}
+RestDF$Cuisines[is.na(RestDF$Cuisines)] <- "Other"
+RestDF <- na.omit(RestDF)
+
+
+sum(duplicated(RestDF))
+RestDF %>% get_dupes()
+```
+
+There are no duplicates  
+
+
+Geocoding the missing locations  
+```{r}
+Rest_temp <- subset(RestDF, subset = Longitude == 0)
+Rest_temp1 <- geocode_OSM(Rest_temp$City, as.sf = T)
+Rest_temp1 <- as.data.frame(Rest_temp1)
+Rest_temp1 <- Rest_temp1[,1:3]
+colnames(Rest_temp1) <- c("City", "Latitude", "Longitude")
+Rest_temp1 <- Rest_temp1[c(1,3,2)]
+Rest_temp2 <- cbind(Rest_temp, Rest_temp1, by = "City")
+Rest_temp2 <- Rest_temp2[c(1:7,21,22, 8:20, 23)]
+Rest_temp2 <- Rest_temp2[, -c(10,11,22,23)]
+
+RestDF <- RestDF[-which(RestDF$Longitude == 0),]
+RestDF <- rbind(RestDF, Rest_temp2)
+```
+
+## Performing EDA:
+
+## 1. Explore the geographical distribution of the restaurants and identify the 
+## cities with the maximum and minimum number of restaurants  
+
+Merging the two data sets
+```{r}
+RestDF1 <- merge(RestDF, Cntry_code, by = "Country Code")
+head(RestDF1)
+```
+
+```{r}
+count(RestDF1, Country, sort = T)
+```
+
+```{r}
+ggplot(RestDF1,
+       aes(x = Country)) +
+  geom_bar(aes(x =  fct_infreq(Country), fill = Country),
+           position = "dodge",
+           stat = "count") +
+  labs(title = "No of restaurants in each country",
+       x = "Countries",
+       y = "No. of restaurants") +
+  theme(axis.text.x = element_text(angle = 75, size = 8),
+        plot.title = element_text(hjust = 0.5))
+```
+
+India has the most number of restaurants - 8651, followed by USA - 434
+The least number of restaurants are in Canada - 4
+
+```{r}
+count(RestDF1, Country, City, sort = T) %>% top_n(5, wt = n)
+```
+
+New Delhi has the most restaurants - 5473
+
+```{r}
+count(RestDF1, Country, City, sort = T) %>% top_n(-46, wt = n)
+```
+
+There are 46 cities in 7 countries that have only 1 restaurant
+
+
+## 2. Restaurant franchising is a thriving venture. So, it is very important to
+## explore the franchise with most national presence
+```{r}
+count(RestDF1, Country, `Restaurant Name`, sort = T) %>% top_n(10, wt = n)
+```
+
+Most franchises are in India. The biggest franchise in term of location is
+Cafe Coffee Day with 83 restaurants   
+
+
+Checking for franchises in the rest of the countries from the data set  
+```{r}
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Australia")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Brazil")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Canada")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Indonesia")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "New Zealand")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Phillipines")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Qatar")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Singapore")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "South Africa")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Sri Lanka")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Turkey")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "UAE")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "United Kingdom")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+
+RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "United States")) %>%
+  count(`Restaurant Name`, sort = T) %>%
+  top_n(10, wt = n)
+```
+
+After India, the US has the most number of franchises - 4, followed by
+Indonesia, UAE and UK with 3 franchises each
+
+
+## 3. Find out the ratio between restaurants that allow table booking vs. those
+## that do not allow table booking
+```{r}
+RestDF1$`Has Table booking` <-
+  as.factor(RestDF1$`Has Table booking`)
+
+Tbl_bkg <- ddply(
+  RestDF1,
+  ~ `Has Table booking`,
+  summarize,
+  No = sum(`Has Table booking` == "No"),
+  Yes = sum(`Has Table booking` == "Yes")
+)
+Tbl_bkg$`Table booking` <- Tbl_bkg$No + Tbl_bkg$Yes
+Tbl_bkg
+
+(1158 / 9550) * 100
+```
+
+Only 12.1 % of the restaurants have the option to book a table
+
+```{r message=FALSE, warning=FALSE}
+plot_ly(
+  Tbl_bkg,
+  labels = ~ `Has Table booking`,
+  values = ~ `Table booking`,
+  type = 'pie',
+  texttemplate = "%{label}: %{value:,} <br>(%{percent})"
+) %>%
+  layout(
+    title = "Table Booking vs No Table Booking",
+    legend = list(title = list(text = '<b> Table booking </b>')),
+    xaxis = list(
+      showgrid = FALSE,
+      zeroline = FALSE,
+      showticklabels = FALSE
+    ),
+    yaxis = list(
+      showgrid = FALSE,
+      zeroline = FALSE,
+      showticklabels = FALSE
+    )
+  )
+```
+
+We can observe in the above pie chart that 87.9% of restaurants don't have a
+table booking option  
+
+
+## 4. Find out the percentage of restaurants providing online delivery
+
+```{r}
+RestDF1$`Has Online delivery` <-
+  as.factor(RestDF1$`Has Online delivery`)
+
+Online_bkg <- ddply(
+  RestDF1,
+  ~ `Has Online delivery`,
+  summarize,
+  No = sum(`Has Online delivery` == "No"),
+  Yes = sum(`Has Online delivery` == "Yes")
+)
+Online_bkg$Online <- Online_bkg$No + Online_bkg$Yes
+Online_bkg
+
+(2451 / 9550) * 100
+```
+
+25.7 % of the restaurants provide online delivery
+
+```{r}
+plot_ly(
+  Online_bkg,
+  labels = ~ `Has Online delivery`,
+  values = ~ Online ,
+  type = 'pie',
+  texttemplate = "%{label}: %{value:,} <br>(%{percent})"
+) %>%
+  layout(
+    title = "Online Delivery vs No Online Delivery",
+    legend = list(title = list(text = '<b> Online Delivery </b>')),
+    xaxis = list(
+      showgrid = FALSE,
+      zeroline = FALSE,
+      showticklabels = FALSE
+    ),
+    yaxis = list(
+      showgrid = FALSE,
+      zeroline = FALSE,
+      showticklabels = FALSE
+    )
+  )
+```
+
+We can observe in the above pie chart that 74.3% of restaurants don't have an
+online delivery service
+
+
+## 5. Calculate the difference in number of votes for the restaurants that 
+## deliver and the restaurants that do not deliver
+
+```{r}
+Vote <- RestDF1 %>%
+  group_by(`Has Online delivery`) %>%
+  summarise(Votes = sum(Votes))
+
+Vote
+
+sum(RestDF1$Votes)
+
+979962 - 517915
+```
+
+Restaurants with Online delivery have 517915 Votes  
+Restaurants without Online delivery have 979962 votes  
+The difference in number of votes is 462047 in favor for the restaurants
+without online delivery  
+
+```{r}
+Vote <- as.data.frame(Vote)
+
+plot_ly(
+  Vote,
+  labels = ~ `Has Online delivery`,
+  values = ~ Votes ,
+  type = 'pie',
+  texttemplate = "%{label}: %{value:,} <br>(%{percent})"
+) %>%
+  layout(
+    title = "Votes - Online Delivery vs No Online Delivery",
+    legend = list(title = list(text = '<b> Online Delivery </b>')),
+    xaxis = list(
+      showgrid = FALSE,
+      zeroline = FALSE,
+      showticklabels = FALSE
+    ),
+    yaxis = list(
+      showgrid = FALSE,
+      zeroline = FALSE,
+      showticklabels = FALSE
+    )
+  )
+```
+
+Restaurants without delivery have 65.4% out of the total votes and restaurants
+that have delivery have only 34.6% of total votes.  
+we conclude that other factors are more important in according higher votes.  
+
+
+## 6. What are the top 10 cuisines served across cities?  
+```{r}
+Cuisine <-
+  select(RestDF1, Country, City, `Restaurant Name`, Cuisines)
+
+Ungrouped <- Cuisine %>%
+  select(Cuisines, `Restaurant Name`) %>%
+  separate_rows(Cuisines, sep = ", ") %>%
+  count(`Restaurant Name`, Cuisines)
+
+Cuisine1 <- merge(Cuisine, Ungrouped, by = "Restaurant Name")
+
+
+Top10_City <- count(Cuisine1, City, Cuisines.y, sort = T) %>%
+  top_n(10, wt = n)
+
+ggplot(Top10_City,
+       aes(x = Cuisines.y, y = n)) +
+  geom_bar(stat = "identity", aes(fill = as.factor(City))) +
+  labs(title = "Top 10 Cuisines Served",
+       x = "Type of Cuisines",
+       y = "No. of Cuisines",
+       fill = "City") +
+  scale_fill_brewer(palette = "Set2") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+As we can observe from the above output in the top 10 cuisines served we have
+only 3 cities: New Delhi, Noida and Gurgaon.  
+We can also see that "North Indian" cuisine is the most served.  
+
+
+Here are the top 10 cuisines in all of the countries
+```{r message=FALSE, warning=FALSE}
+set.seed(1)
+wordcloud(
+  words = RestDF1$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+Below are the top 10 cuisine per country
+
+### Australia
+```{r message=FALSE, warning=FALSE}
+Australia <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Australia")) %>%
+  count(Cuisines, sort = T)
+set.seed(2)
+wordcloud(
+  words = Australia$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### Brazil  
+```{r message=FALSE, warning=FALSE}
+Brazil <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Brazil")) %>%
+  count(Cuisines, sort = T)
+set.seed(3)
+wordcloud(
+  words = Brazil$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### Canada
+```{r message=FALSE, warning=FALSE}
+Canada <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Canada")) %>%
+  count(Cuisines, sort = T)
+set.seed(4)
+wordcloud(
+  words = Canada$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### India
+```{r message=FALSE, warning=FALSE}
+India <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "India")) %>%
+  count(Cuisines, sort = T)
+set.seed(5)
+wordcloud(
+  words = India$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### Indonesia
+```{r message=FALSE, warning=FALSE}
+Indonesia <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Indonesia")) %>%
+  count(Cuisines, sort = T)
+set.seed(6)
+wordcloud(
+  words = Indonesia$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### New Zealand
+```{r message=FALSE, warning=FALSE}
+New_Zealand <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "New Zealand")) %>%
+  count(Cuisines, sort = T)
+set.seed(7)
+wordcloud(
+  words = New_Zealand$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### Phillipines
+```{r message=FALSE, warning=FALSE}
+Phillipines <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Phillipines")) %>%
+  count(Cuisines, sort = T)
+set.seed(8)
+wordcloud(
+  words = Phillipines$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### Qatar
+```{r message=FALSE, warning=FALSE}
+Qatar <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Qatar")) %>%
+  count(Cuisines, sort = T)
+set.seed(9)
+wordcloud(
+  words = Qatar$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### Singapore
+```{r message=FALSE, warning=FALSE}
+Singapore <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Singapore")) %>%
+  count(Cuisines, sort = T)
+set.seed(10)
+wordcloud(
+  words = Singapore$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### South Africa
+```{r message=FALSE, warning=FALSE}
+South_Africa <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "South Africa")) %>%
+  count(Cuisines, sort = T)
+set.seed(11)
+wordcloud(
+  words = South_Africa$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### Sri Lanka
+```{r message=FALSE, warning=FALSE}
+Sri_Lanka <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Sri Lanka")) %>%
+  count(Cuisines, sort = T)
+set.seed(12)
+wordcloud(
+  words = Sri_Lanka$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### Turkey
+```{r message=FALSE, warning=FALSE}
+Turkey <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "Turkey")) %>%
+  count(Cuisines, sort = T)
+set.seed(13)
+wordcloud(
+  words = Turkey$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### UAE
+```{r message=FALSE, warning=FALSE}
+UAE <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "UAE")) %>%
+  count(Cuisines, sort = T)
+set.seed(14)
+wordcloud(
+  words = UAE$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### UK
+```{r message=FALSE, warning=FALSE}
+UK <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "United Kingdom")) %>%
+  count(Cuisines, sort = T)
+set.seed(15)
+wordcloud(
+  words = UK$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+### United States
+```{r message=FALSE, warning=FALSE}
+US <- RestDF1 %>%
+  group_by(Country) %>%
+  filter(any(Country == "United States")) %>%
+  count(Cuisines, sort = T)
+set.seed(16)
+wordcloud(
+  words = US$Cuisines,
+  min.freq = 1,
+  max.words = 10,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Set2")
+)
+```
+
+## 7. What is the maximum and minimum number of cuisines that a restaurant serves?
+## Also, which is the most served cuisine across the restaurant for each city?
+
+```{r}
+count(Cuisine1, `Restaurant Name`, Cuisines.y, sort = T) %>%
+  top_n(10, wt = n)
+
+max(Cuisine1$n)
+```
+
+The maximum number of cuisines served by a restaurant is 83: Cuisine is Cafe and
+the franchise name is Cafe Coffee Day  
+
+```{r}
+min(Cuisine1$n)
+```
+
+There are multiple restaurants that serve only one cuisine.  
+
+
+## 8. What is the distribution cost across the restaurants?  
+```{r message=FALSE, warning=FALSE}
+qplot(
+  RestDF1$`Average Cost for two`,
+  geom = "histogram",
+  binwidth = 30,
+  main = "Histogram for Average Cost for two",
+  xlab = "Avg Cost",
+  fill = I("red"),
+  col = I("blue"),
+  alpha = I(.2)
+)
+
+
+qplot(
+  RestDF1$`Average Cost for two`,
+  geom = "histogram",
+  binwidth = 30,
+  main = "Histogram for Average Cost for two",
+  xlab = "Avg Cost",
+  fill = I("red"),
+  col = I("blue"),
+  alpha = I(.2),
+  xlim = c(50, 1000)
+)
+```
+
+From the above histograms we can observe that mostly the costs are between
+250 and 550
+
+
+## 9. How ratings are distributed among the various factors?  
+## 10.Explain the factors in the data that may have an effect on ratings.  
+## For example, number of cuisines, cost, delivery option, etc.  
+
+```{r message=FALSE, warning=FALSE}
+ggplot(RestDF1, aes(x = `Rating text`, fill = `Has Table booking`)) +
+  geom_histogram(alpha = 0.5,
+                 position = "dodge",
+                 stat = "count")
+
+ggplot(RestDF1, aes(x = `Rating text`, fill = `Has Online delivery`)) +
+  geom_histogram(alpha = 0.5,
+                 position = "dodge",
+                 stat = "count")
+
+```
+
+Price Count & Rating Distribution
+```{r}
+RestDF1$`Average Cost for two Grp` <-
+  cut(
+    RestDF1$`Average Cost for two`,
+    c(0, 200, 500, 1000, 3000, 5000, 10000, 800000),
+    labels = c(
+      "<=200",
+      "<=500",
+      "<=1000",
+      "<=3000",
+      "<=5000",
+      "<=10000",
+      "<=800000"
+    )
+  )
+
+RestDF1 %>%
+  filter(!is.na(`Average Cost for two Grp`)) %>%
+  ggplot() +
+  geom_bar(aes(x = `Average Cost for two Grp`, fill = `Average Cost for two Grp`),
+           stat = "count") +
+  labs(title = "Average Price") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+RestDF1 %>%
+  filter(!is.na(`Average Cost for two Grp`)) %>%
+  ggplot() +
+  geom_boxplot(aes(x = `Average Cost for two Grp`, y = `Aggregate rating`,
+                   fill = `Average Cost for two Grp`)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+RestDF1 %>%
+  ggplot() +
+  geom_bar(aes(x = `Price range`, fill = as.factor(`Price range`)),
+           stat = "count") +
+  labs(title = "Price Range") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_discrete(name = "Price range")
+
+RestDF1 %>%
+  ggplot() +
+  geom_boxplot(aes(
+    x = as.factor(`Price range`),
+    y = `Aggregate rating`,
+    fill = as.factor(`Price range`)
+  )) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_discrete(name = "Price range") +
+  xlab("Price range")
+
+RestDF1 %>%
+  ggplot() +
+  geom_point(aes(x = Votes, y = `Aggregate rating`))
+
+RestDF1 %>%
+  ggplot() +
+  geom_boxplot(aes(
+    x = `Has Table booking`,
+    y = `Aggregate rating`,
+    fill = as.factor(`Has Table booking`)
+  )) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_discrete(name = "Table booking") +
+  xlab("Has table booking")
+
+RestDF1 %>%
+  ggplot() +
+  geom_boxplot(aes(
+    x = `Has Online delivery`,
+    y = `Aggregate rating`,
+    fill = as.factor(`Has Online delivery`)
+  )) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_discrete(name = "Online delivery") +
+  xlab("Has online delivery")
+```
+
+We can observe that there is no single variable that affects the rating in a 
+strong way however average cost for two, price range, number of votes, table
+booking and online delivery are affecting in part the rating of a restaurant.
